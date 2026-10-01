@@ -10,15 +10,18 @@ import { clamp, rand, pick, lerp } from './util.js';
 export const COURT_Y = GROUND + 1;
 const HX = 3.05, HZ = 6.7, KZ = 2.13, NET_H = 0.89, POST_X = 3.35;
 const G = 9.0, R = 0.13;
+const PLAYER_REACH = 2.1; // horizontal metres from the player's centre to the ball
 const SIDE = { player: 1, ai: -1 };
 const other = (w) => (w === 'player' ? 'ai' : 'player');
 const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
 const say = (n) => NUM[n] ?? String(n);
 
 export const DIFFICULTY = {
-  easy: { speed: 3.5, reach: 1.15, err: 0.2, errScale: 0.9, judge: 0.45, react: 0.22 },
-  normal: { speed: 4.3, reach: 1.3, err: 0.11, errScale: 0.6, judge: 0.75, react: 0.14 },
-  hard: { speed: 5.1, reach: 1.45, err: 0.05, errScale: 0.35, judge: 0.92, react: 0.07 },
+  // speed/reach: how much court Dinkleton covers. err: base miss chance per shot, tire: extra per shot in a long rally.
+  // angle: chance a drive goes toward the sideline away from you. pace: drive speed range (m/s). wide: max |x| aimed at.
+  easy: { speed: 3.0, reach: 1.05, err: 0.2, tire: 0.04, errScale: 0.9, judge: 0.4, react: 0.32, angle: 0.15, pace: [7, 9], wide: 2.0, smash: 0.35 },
+  normal: { speed: 4.1, reach: 1.25, err: 0.09, tire: 0.03, errScale: 0.6, judge: 0.72, react: 0.2, angle: 0.5, pace: [9, 11.5], wide: 2.55, smash: 0.7 },
+  hard: { speed: 4.8, reach: 1.4, err: 0.06, tire: 0.02, errScale: 0.4, judge: 0.9, react: 0.1, angle: 0.65, pace: [10, 13], wide: 2.75, smash: 0.9 },
 };
 
 export class Match {
@@ -221,6 +224,7 @@ export class Match {
     if (!this.active) return;
     const g = this.game, p = g.player, opp = this.opponent;
     this.timer -= dt;
+    this.t = (this.t || 0) + dt;
     this.swingT = Math.max(0, this.swingT - dt);
 
     // walking away forfeits
@@ -239,6 +243,7 @@ export class Match {
     } else if (this.state === 'rally') {
       this.stepBall(dt);
       if (this.state === 'rally') this.aiThink(dt);
+      if (this.state === 'rally' && this.ballInPlayerReach(PLAYER_REACH)) this.inReachAt = this.t; // for late swings
       if (this.swingT > 0) this.tryPlayerHit();
       this.assist();
       p.lockMove = false;
@@ -376,7 +381,18 @@ export class Match {
       this.updateHud();
       return;
     }
-    if (this.state === 'rally') { this.swingT = 0.34; g.audio.play('whoosh', { vol: 0.6 }); }
+    if (this.state === 'rally') {
+      this.swingT = 0.45;
+      g.audio.play('whoosh', { vol: 0.6 });
+      // a slightly late swing still connects if the ball was in reach a moment ago
+      if (this.t - (this.inReachAt ?? -9) < 0.22) this.tryPlayerHit(PLAYER_REACH + 0.6);
+    }
+  }
+  ballInPlayerReach(reach) {
+    const b = this.ball, p = this.game.player;
+    if (!b.live || b.lastHitter !== 'ai' || b.pos.z < -0.25) return false;
+    const hy = b.pos.y - COURT_Y;
+    return Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z) <= reach && hy >= 0.02 && hy <= 3.0;
   }
   // Where the crosshair points on the opponent's half (with optional aim assist).
   aimPoint(serve = false) {
@@ -398,12 +414,10 @@ export class Match {
     function t2far(zz) { return zz < -12; }
   }
 
-  tryPlayerHit() {
+  tryPlayerHit(reach = PLAYER_REACH) {
     const g = this.game, p = g.player, b = this.ball;
-    if (!b.live || b.lastHitter !== 'ai') return;
+    if (!this.ballInPlayerReach(reach)) return;
     const dx = b.pos.x - p.pos.x, dz = b.pos.z - p.pos.z, hd = Math.hypot(dx, dz), hy = b.pos.y - COURT_Y;
-    const reach = 1.8;
-    if (hd > reach || hy > 2.7 || hy < 0.02 || b.pos.z < -0.25) return;
     // rules (with aim assist on, an illegal swing just whiffs instead of faulting)
     const twoBounce = b.shot <= 2 && b.bounces === 0;
     const kitchen = b.bounces === 0 && p.pos.z < KZ && p.pos.z > -0.5;
@@ -414,7 +428,7 @@ export class Match {
     this.swingT = 0;
     if (twoBounce) return this.endRally('ai', 'Two-bounce rule! You must let it bounce.');
     if (kitchen) return this.endRally('ai', 'Kitchen violation! No volleys in the kitchen.');
-    const q = clamp(1 - hd / reach, 0, 1);
+    const q = clamp(1.15 - hd / PLAYER_REACH, 0, 1);
     const aim = this.aimPoint();
     const err = g.settings.aimAssist ? 0.1 + (1 - q) * 0.55 : 0.15 + (1 - q) * 1.0;
     let tx = aim.x + rand(-err, err), tz = aim.z + rand(-err, err) * 0.8;
@@ -424,6 +438,7 @@ export class Match {
     else if (hy > 1.5 && p.pos.z < 4.5) t = rand(0.42, 0.55);            // smash
     else if (p.pitch > 0.35) t = 1.9;                                    // lob
     else t = dist / 12 + 0.32;                                           // drive
+    if (q < 0.5 && t < 1.6) t *= 1 + (0.5 - q) * 1.4;                   // mistimed: a floaty pop-up Dinkleton can smash
     const v = this.solve(b.pos, tx, tz, t, 0.12);
     this.launch('player', v);
     if (q > 0.72) g.ui.pop('PERFECT!');
@@ -505,20 +520,20 @@ export class Match {
     const nearNet = opp.pos.z > -4;
     let tx, tz, t, clearance = 0.15;
     const r = Math.random();
-    if (hy > 1.35 && nearNet && r < 0.7) { tx = rand(-2.6, 2.6); tz = rand(3.5, 6.0); t = rand(0.45, 0.6); }          // smash
-    else if (nearNet && hy < 0.7 && r < 0.65) { tx = rand(-2.4, 2.4); tz = rand(0.7, 2.0); t = rand(1.0, 1.25); }         // dink
-    else if (p.pos.z < 3 && r < 0.25) { tx = rand(-2.2, 2.2); tz = rand(5.2, 6.3); t = 1.85; }                            // lob over a net-rusher
+    if (hy > 1.35 && nearNet && r < d.smash) { tx = rand(-d.wide, d.wide); tz = rand(3.5, 6.0); t = rand(0.5, 0.65); } // smash
+    else if (nearNet && hy < 0.7 && r < 0.6) { tx = rand(-2.2, 2.2); tz = rand(0.8, 2.0); t = rand(1.05, 1.3); }       // dink
+    else if (p.pos.z < 3 && r < 0.25) { tx = rand(-2.2, 2.2); tz = rand(5.2, 6.3); t = 1.9; }                          // lob over a net-rusher
     else {
-      // drive: often angled toward the sideline away from the player
+      // drive: harder villagers angle it away from the player more often, and hit it harder
       const away = -Math.sign(p.pos.x || 1);
-      tx = Math.random() < 0.65 ? away * rand(1.4, 2.8) : rand(-2.6, 2.6);
-      tz = rand(3.6, 6.3);
-      t = Math.hypot(tx - b.pos.x, tz - b.pos.z) / rand(10, 14) + 0.28;
+      tx = Math.random() < d.angle ? away * rand(1.0, d.wide) : rand(-1.8, 1.8);
+      tz = rand(3.8, 6.2);
+      t = Math.hypot(tx - b.pos.x, tz - b.pos.z) / rand(d.pace[0], d.pace[1]) + 0.3;
     }
     tx += rand(-1, 1) * d.errScale * 0.6; tz += rand(-1, 1) * d.errScale * 0.6;
     const pace = b.vel.length();
-    const pressure = Math.max(0, this.rallyLen - 4) * 0.012; // long rallies wear villagers down
-    if (Math.random() < d.err + pressure + Math.max(0, pace - 12) * 0.02) {
+    const pressure = Math.min(0.35, Math.max(0, this.rallyLen - 3) * d.tire); // long rallies wear villagers down
+    if (Math.random() < d.err + pressure + Math.max(0, pace - 11) * 0.025) {
       const kind = Math.random();
       if (kind < 0.4) clearance = -0.5;                    // into the net
       else if (kind < 0.7) tz = rand(7.0, 8.2);            // long

@@ -125,7 +125,7 @@ button.danger { background: #8c2c2c; margin-top: 12px; }
 .rname { margin-left: auto; font-size: 13px; }
 
 /* ---------- dialog / death / settings ---------- */
-.panel.dlg { width: min(560px, 94vw); text-align: left; }
+.panel.dlg { width: min(560px, 94vw); text-align: left; overflow-y: auto; }
 .dlg-head { display: flex; align-items: center; gap: 12px; }
 #dlg-face img { height: 70px; }
 #dlg-name { font: bold 20px var(--ui-font); color: var(--pickle); }

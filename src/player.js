@@ -72,6 +72,11 @@ export class Player {
       this.vel.y -= 9 * dt;
       if (jump) this.vel.y = Math.min(this.vel.y + 30 * dt, 3.2);
       this.vel.y *= Math.exp(-2.5 * dt);
+      // Getting out: swimming alone stalls just below a 1-block ledge (you leave the water and lose lift),
+      // so jumping off the bottom of shallow water works, and pushing against a ledge at the surface climbs out.
+      const climbing = jump || (this.autoJump && (mv.x || mv.z));
+      if (jump && this.onGround) this.vel.y = 7.5;
+      else if (climbing && this.hitWall && !this.headInWater && this.vel.y < 6.5) this.vel.y = 6.5;
     } else {
       this.vel.y -= 30 * dt;
       if (this.vel.y < -55) this.vel.y = -55;
@@ -125,6 +130,7 @@ export class Player {
     const steps = Math.max(1, Math.ceil(Math.max(Math.abs(d.x), Math.abs(d.y), Math.abs(d.z)) / 0.35));
     d.divideScalar(steps);
     this.onGround = false;
+    this.hitWall = false;
     for (let s = 0; s < steps; s++) {
       // Y
       if (d.y) {
@@ -139,14 +145,14 @@ export class Player {
       // X
       if (d.x) {
         const nx = this.pos.x + d.x;
-        if (this.collides(world, nx, this.pos.y, this.pos.z)) { this.pos.x = d.x > 0 ? Math.floor(nx + HW) - HW - 0.001 : Math.floor(nx - HW) + 1 + HW + 0.001; this.vel.x = 0; d.x = 0; }
+        if (this.collides(world, nx, this.pos.y, this.pos.z)) { this.pos.x = d.x > 0 ? Math.floor(nx + HW) - HW - 0.001 : Math.floor(nx - HW) + 1 + HW + 0.001; this.vel.x = 0; d.x = 0; this.hitWall = true; }
         else if (edgeGuard && !this.collides(world, nx, this.pos.y - 0.6, this.pos.z)) { this.vel.x = 0; d.x = 0; }
         else this.pos.x = nx;
       }
       // Z
       if (d.z) {
         const nz = this.pos.z + d.z;
-        if (this.collides(world, this.pos.x, this.pos.y, nz)) { this.pos.z = d.z > 0 ? Math.floor(nz + HW) - HW - 0.001 : Math.floor(nz - HW) + 1 + HW + 0.001; this.vel.z = 0; d.z = 0; }
+        if (this.collides(world, this.pos.x, this.pos.y, nz)) { this.pos.z = d.z > 0 ? Math.floor(nz + HW) - HW - 0.001 : Math.floor(nz - HW) + 1 + HW + 0.001; this.vel.z = 0; d.z = 0; this.hitWall = true; }
         else if (edgeGuard && !this.collides(world, this.pos.x, this.pos.y - 0.6, nz)) { this.vel.z = 0; d.z = 0; }
         else this.pos.z = nz;
       }

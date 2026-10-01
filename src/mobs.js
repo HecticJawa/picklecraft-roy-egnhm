@@ -259,6 +259,8 @@ export class CreeperMan extends Entity {
       // Big Suit: walk to the player, then explode. Driven by main.js cutscene.
       if (this.mode === 'walk') {
         this.walkToward(p.pos.x, p.pos.z, this.speed, dt, 3);
+        // speak well before the boom: iOS can mute Web Audio while speech is playing
+        if (!this.spoke && dist < 17) { this.spoke = true; this.onNear?.(); }
         if (dist < 5.5) { this.mode = 'fuse'; this.stop(); }
         this.stompT = (this.stompT || 0) - dt;
         if (this.stompT <= 0 && Math.hypot(this.vel.x, this.vel.z) > 0.5) { this.stompT = 0.42; g.audio.play('stomp', { pos: this.pos, vol: 1.3 }); g.shake(0.35); }
@@ -315,6 +317,7 @@ export class CreeperMan extends Entity {
   explode() {
     const g = this.game;
     this.remove();
+    if (this.big) g.audio.hush(); // nothing talking over (or muting) the boom
     g.explosion(this.pos.x, this.pos.y + 0.8 * this.scale, this.pos.z, this.radius, this.big ? 'Big Suit' : 'a Suit');
   }
   die() {

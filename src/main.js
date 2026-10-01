@@ -25,11 +25,13 @@ const SUIT_VOICE = { name: 'Big Suit', pitch: 0.05, rate: 0.6, hrmmPitch: 0.4 };
 class Game {
   constructor() {
     this.touch = isTouchDevice() || new URLSearchParams(location.search).has('touch');
+    const saved = readJSON(SETTINGS_KEY) || {};
+    if ((saved.v || 1) < 2) delete saved.autoHustle; // v2: auto-run became the default everywhere
     this.settings = Object.assign({
       renderDist: this.touch ? 4 : 6, sensitivity: 1, fov: 75, volume: 0.8, music: true, voices: true,
-      difficulty: 'normal', landingMarker: true, aimAssist: true, autoHustle: this.touch, peaceful: false,
+      difficulty: 'normal', landingMarker: true, aimAssist: true, autoHustle: true, peaceful: false,
       creative: false, invertY: false, showFps: false,
-    }, readJSON(SETTINGS_KEY) || {});
+    }, saved, { v: 2 });
     this.stats = { wins: 0, losses: 0, deaths: 0, achievements: {}, playTime: 0 };
     this.clock = new THREE.Clock();
     this.state = 'loading';
@@ -499,10 +501,13 @@ class Game {
     if (v === this.dinkleton) {
       const text = this.stats.losses > this.stats.wins ? 'Hrmm. Back for more? Same rules as always: lose, and the forest gets you.' : 'Hrmm! Fancy a game of pickleball? First to eleven, win by two. The loser... hrmm. You will see.';
       v.say(text);
+      const play = (target, difficulty) => () => { done(); this.startMatch(target, difficulty); };
       this.openDialog({ name: v.name, text, options: [
-        { label: '🏓 Play! (first to 11)', fn: () => { done(); this.startMatch(11); } },
-        { label: '⚡ Quick game (first to 5)', fn: () => { done(); this.startMatch(5); } },
-        { label: '❓ What are the rules?', fn: () => { const t = 'Serve underhand, diagonally, past the kitchen. The serve and the return must bounce. No volleys from the kitchen. Only the server scores. Aim where you look, swing when the ball is close.'; v.say(t); this.ui.dialog({ name: v.name, text: t, options: [{ label: 'Got it. Let\'s play! (to 11)', fn: () => { done(); this.startMatch(11); } }, { label: 'Quick game (to 5)', fn: () => { done(); this.startMatch(5); } }, { label: 'Bye', fn: done }] }); } },
+        { label: '😌 Play: Easy (first to 11)', fn: play(11, 'easy') },
+        { label: '🏓 Play: Normal (first to 11)', fn: play(11, 'normal') },
+        { label: '🔥 Play: Hard (first to 11)', fn: play(11, 'hard') },
+        { label: `⚡ Quick game (first to 5, ${this.settings.difficulty})`, fn: play(5) },
+        { label: '❓ What are the rules?', fn: () => { const t = 'Serve underhand, diagonally, past the kitchen. The serve and the return must bounce. No volleys from the kitchen. Only the server scores. Aim where you look, swing when the ball is close.'; v.say(t); this.ui.dialog({ name: v.name, text: t, options: [{ label: 'Got it. Easy game (to 11)', fn: play(11, 'easy') }, { label: 'Normal game (to 11)', fn: play(11, 'normal') }, { label: 'Quick game (to 5)', fn: play(5) }, { label: 'Bye', fn: done }] }); } },
         { label: '🕴 Who lives in the forest?', fn: () => sayAndClose('Big Suit. He loves pickleball. He hates losers. He is very, very big. Hrmm.') },
         { label: 'Bye', fn: done },
       ] });
@@ -551,10 +556,15 @@ class Game {
     setTimeout(() => (this.statue.model.root.rotation.z = 0), 300);
   }
 
-  startMatch(target) {
+  startMatch(target, difficulty) {
     if (this.match.active || this.cutscene) return;
+    if (difficulty && difficulty !== this.settings.difficulty) { this.settings.difficulty = difficulty; this.applySettings(); }
     this.dinkleton.role = 'scripted';
     this.match.start({ opponent: this.dinkleton, referee: this.referee, target, difficulty: this.settings.difficulty });
+    if (this.settings.autoHustle && !this.stats.autoRunHint) {
+      this.stats.autoRunHint = 1;
+      setTimeout(() => this.ui.toast('Auto-run is on', 'You run to the ball automatically: just aim and swing. Moving yourself overrides it; turn it off in Settings.', null, 7), 4500);
+    }
   }
 
   // ---------------------------------------------------------------- match results
@@ -610,7 +620,8 @@ class Game {
       const y = this.world.baseHeight(Math.floor(start.x), Math.floor(start.z)) + 1;
       const big = new CreeperMan(this, start.x, y, start.z, { scale: 3.6, big: true });
       big.mode = 'walk'; big.speed = 5.2; big.yaw = Math.PI / 2;
-      big.onFuse = () => { this.audio.say(SUIT_VOICE, 'Good game.', { hrmm: false, priority: true }); this.ui.bubble(big, 'Good game.'); };
+      big.onNear = () => { this.audio.say(SUIT_VOICE, 'Good game.', { hrmm: false, priority: true }); this.ui.bubble(big, 'Good game.'); };
+      big.onFuse = () => this.ui.bubble(big, '...');
       this.mobs.add(big);
       c.big = big;
       this.audio.play('scream');

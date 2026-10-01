@@ -22,7 +22,19 @@ export class Audio {
       if (!AC) return;
       this.ctx = new AC();
       const c = this.ctx;
-      this.master = c.createGain(); this.master.connect(c.destination);
+      // compressor: keeps stacked explosions from clipping and lifts quiet layers on small phone speakers
+      this.comp = c.createDynamicsCompressor();
+      this.comp.threshold.value = -18; this.comp.knee.value = 12; this.comp.ratio.value = 6;
+      this.comp.attack.value = 0.003; this.comp.release.value = 0.25;
+      this.comp.connect(c.destination);
+      this.master = c.createGain(); this.master.connect(this.comp);
+      // soft-clip curve: turns sub-bass booms into harmonics that phone speakers can actually play
+      this.driveCurve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; this.driveCurve[i] = Math.tanh(x * 6); }
+      // iOS can interrupt or suspend the context (calls, speech, backgrounding): resume on the next touch/key
+      const resume = () => { if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {}); };
+      for (const ev of ['touchstart', 'touchend', 'pointerdown', 'keydown']) addEventListener(ev, resume, { passive: true });
+      c.onstatechange = () => { if (c.state !== 'running' && c.state !== 'closed') setTimeout(resume, 200); };
       this.sfx = c.createGain(); this.sfx.connect(this.master);
       this.music = c.createGain(); this.music.connect(this.master);
       // shared reverb for music and big moments
@@ -76,14 +88,15 @@ export class Audio {
     g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
   }
-  tone({ f = 440, f2 = null, type = 'sine', dur = 0.2, vol = 0.3, attack = 0.005, at = 0, dest = null, filter = null }) {
+  tone({ f = 440, f2 = null, type = 'sine', dur = 0.2, vol = 0.3, attack = 0.005, at = 0, dest = null, filter = null, drive = false }) {
     const c = this.ctx; if (!c) return;
     const t = c.currentTime + at;
     const o = c.createOscillator(), g = c.createGain();
     o.type = type; o.frequency.setValueAtTime(f, t);
     if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
     let node = o;
-    if (filter) { const fl = c.createBiquadFilter(); fl.type = filter.type || 'lowpass'; fl.frequency.value = filter.f; fl.Q.value = filter.q || 0.7; o.connect(fl); node = fl; }
+    if (drive) { const ws = c.createWaveShaper(); ws.curve = this.driveCurve; ws.oversample = '2x'; node.connect(ws); node = ws; }
+    if (filter) { const fl = c.createBiquadFilter(); fl.type = filter.type || 'lowpass'; fl.frequency.value = filter.f; fl.Q.value = filter.q || 0.7; node.connect(fl); node = fl; }
     node.connect(g); g.connect(dest || this.sfx);
     this.env(g, t, attack, vol, dur);
     o.start(t); o.stop(t + attack + dur + 0.05);
@@ -102,9 +115,11 @@ export class Audio {
   }
 
   // ---------- sound effects ----------
-  play(name, { pos = null, vol = 1, mat = 'stone' } = {}) {
+  play(name, { pos = null, vol = 1, mat = 'stone', range = 28 } = {}) {
     if (!this.ctx || this.settings.volume <= 0) return;
-    const v = vol * this.gainFor(pos);
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+    if (name === 'explosion' || name === 'stomp') range = Math.max(range, vol > 1.2 ? 80 : 40); // big sounds carry
+    const v = vol * this.gainFor(pos, range);
     if (v <= 0.01) return;
     const r = 1 + (Math.random() - 0.5) * 0.15;
     switch (name) {
@@ -128,11 +143,17 @@ export class Audio {
       case 'net': this.noiseHit({ f: 400, q: 0.5, dur: 0.25, vol: 0.4 * v }); break;
       case 'whoosh': this.noiseHit({ f: 700, f2: 2400, q: 0.8, dur: 0.15, vol: 0.18 * v }); break;
       case 'explosion': {
-        const c = this.ctx, big = vol > 1.2;
-        this.noiseHit({ f: 1400, f2: 90, type: 'lowpass', dur: big ? 3 : 1.6, vol: 1.0 * v, attack: 0.01 });
-        this.tone({ f: 70, f2: 28, dur: big ? 2.5 : 1.2, vol: 0.9 * v, attack: 0.01 });
-        this.noiseHit({ f: 3000, f2: 300, q: 0.4, dur: 0.4, vol: 0.5 * v, dest: this.reverb });
-        void c; break;
+        const big = vol > 1.2, d = big ? 2.8 : 1.5;
+        // sub-bass rumble (big speakers)
+        this.noiseHit({ f: 1400, f2: 90, type: 'lowpass', dur: d, vol: 0.5 * v, attack: 0.01 });
+        this.tone({ f: 70, f2: 28, dur: d * 0.85, vol: 0.45 * v, attack: 0.01 });
+        // mid-range body and crunch (what phone speakers can reproduce)
+        this.tone({ f: 110, f2: 40, type: 'sawtooth', dur: d * 0.7, vol: 0.8 * v, attack: 0.005, drive: true, filter: { f: 2400 } });
+        this.noiseHit({ f: 1000, f2: 300, q: 0.5, dur: d * 0.75, vol: 1.6 * v, attack: 0.004 });
+        this.noiseHit({ f: 2600, type: 'highpass', dur: 0.3, vol: 0.8 * v, attack: 0.002 });
+        for (let i = 0; i < (big ? 18 : 10); i++) this.noiseHit({ f: 1200 + Math.random() * 2800, q: 2.5, dur: 0.06, vol: 0.5 * v, at: 0.08 + Math.random() * d * 0.6 });
+        this.noiseHit({ f: 3000, f2: 300, q: 0.4, dur: 0.5, vol: 0.5 * v, dest: this.reverb });
+        break;
       }
       case 'hiss': this.noiseHit({ f: 3800, f2: 5000, type: 'highpass', dur: 1.5, attack: 1.2, vol: 0.35 * v }); break;
       case 'hurt': this.tone({ f: 330, f2: 150, type: 'square', dur: 0.16, vol: 0.22 * v, filter: { f: 1400 } }); break;
@@ -146,10 +167,18 @@ export class Audio {
       case 'doom': {
         this.tone({ f: 55, type: 'sawtooth', dur: 4, attack: 0.5, vol: 0.4 * v, filter: { f: 300 } });
         this.tone({ f: 58, type: 'sawtooth', dur: 4, attack: 0.5, vol: 0.3 * v, filter: { f: 260 } });
-        [196, 185, 175, 147].forEach((f, i) => this.tone({ f, type: 'triangle', dur: 0.9, vol: 0.2 * v, at: i * 0.7, dest: this.reverb }));
+        [196, 185, 175, 147].forEach((f, i) => {
+          this.tone({ f, type: 'triangle', dur: 0.9, vol: 0.2 * v, at: i * 0.7, dest: this.reverb });
+          this.tone({ f, type: 'sawtooth', dur: 0.8, vol: 0.12 * v, at: i * 0.7, filter: { f: 1600 } }); // harmonics for phone speakers
+        });
         break;
       }
-      case 'stomp': this.tone({ f: 60, f2: 35, dur: 0.35, vol: 0.8 * v, attack: 0.005 }); this.noiseHit({ f: 200, type: 'lowpass', dur: 0.3, vol: 0.6 * v }); break;
+      case 'stomp':
+        this.tone({ f: 60, f2: 35, dur: 0.35, vol: 0.4 * v, attack: 0.005 });                                     // sub thud
+        this.tone({ f: 95, f2: 48, type: 'square', dur: 0.28, vol: 0.75 * v, drive: true, filter: { f: 1400 } }); // audible "boom" harmonics
+        this.noiseHit({ f: 500, q: 0.8, dur: 0.26, vol: 1.4 * v, attack: 0.003 });                                // body
+        this.noiseHit({ f: 1700, q: 1.3, dur: 0.08, vol: 0.6 * v });                                              // ground crunch
+        break;
       case 'rustle': for (let i = 0; i < 4; i++) this.noiseHit({ f: 2500, q: 0.5, dur: 0.18, vol: 0.25 * v, at: i * 0.12 }); break;
       case 'cheer': {
         for (let i = 0; i < 5; i++) this.noiseHit({ f: 1100 + Math.random() * 900, q: 0.8, dur: 1.2, attack: 0.15, vol: 0.12 * v, at: i * 0.05 });
@@ -210,12 +239,19 @@ export class Audio {
     u.rate = clamp(who.rate ?? 1.15, 0.5, 2);
     u.volume = clamp(vol * this.settings.volume * 1.4, 0, 1);
     this.speaking = true;
-    const done = () => { this.speaking = false; setTimeout(() => this.pump(), 60); };
+    const done = () => {
+      this.speaking = false;
+      if (this.ctx && this.ctx.state !== 'running') this.ctx.resume().catch(() => {}); // iOS may pause Web Audio during speech
+      setTimeout(() => this.pump(), 60);
+    };
     u.onend = done; u.onerror = done;
     setTimeout(() => { if (this.speaking && !speechSynthesis.speaking) done(); }, 6000);
     speechSynthesis.speak(u);
   }
-  hush() { this.voiceQueue = []; if (window.speechSynthesis) speechSynthesis.cancel(); this.speaking = false; }
+  hush() {
+    this.voiceQueue = []; if (window.speechSynthesis) speechSynthesis.cancel(); this.speaking = false;
+    if (this.ctx && this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+  }
 
   // ---------- music ----------
   update(dt, inMatch) {
