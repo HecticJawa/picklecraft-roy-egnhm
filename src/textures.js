@@ -130,6 +130,20 @@ function avgColor(img, rect) {
 }
 // Studio background is ~(1,0,244); the suit is ~(10,18,145), so key on brightness of blue too.
 const isBlueBg = (r, g, b) => b > 175 && b - Math.max(r, g) > 110;
+// The photo was taken of a TV: a dark slate bezel crosses the top (down to ~y=100 on the right, in original pixels).
+// Bezel is ~(36,50,60): green and blue clearly above red. His hair is reddish-brown (r >= g), so it is not matched.
+// Blue studio light spills onto the dark hair; pull it back toward brown. Bright pixels (his blue eyes) are left alone.
+const despill = (d, i) => {
+  const r = d[i], g = d[i + 1], b = d[i + 2], m = Math.max(r, g);
+  if (0.3 * r + 0.59 * g + 0.11 * b < 105 && b > m + 18) d[i + 2] = m + 18;
+};
+const isBezel = (r, g, b, yOrig, xOrig = 0) => {
+  if (yOrig >= 150) return false;
+  if (yOrig < 30 + 0.09 * xOrig) return true;                                    // above the bezel's diagonal lower edge
+  if (b > 90 && b > 2.5 * Math.max(r, g)) return true;                          // blended blue fringe
+  if (r < 60 && b >= r + 10 && (g >= r + 6 || r + g + b < 140)) return true;    // slate bezel and its dark edge
+  return r < 14 && g < 14 && b < 150;
+};
 
 export const photos = {}; // filled by loadPhotos()
 
@@ -180,7 +194,10 @@ export async function loadPhotos() {
     ctx.drawImage(suitImg, S.face.x, S.face.y, S.face.s, S.face.s, 0, 0, N, N);
     const id = ctx.getImageData(0, 0, N, N), d = id.data, hair = photos.suitHair;
     for (let i = 0; i < d.length; i += 4) {
-      if (isBlueBg(d[i], d[i + 1], d[i + 2])) { const n = 0.8 + 0.4 * Math.random(); d[i] = hair[0] * n; d[i + 1] = hair[1] * n; d[i + 2] = hair[2] * n; }
+      const yOrig = S.face.y + Math.floor(i / 4 / N) * S.face.s / N, xOrig = S.face.x + ((i / 4) % N) * S.face.s / N;
+      const bg = isBlueBg(d[i], d[i + 1], d[i + 2]) || isBezel(d[i], d[i + 1], d[i + 2], yOrig, xOrig);
+      if (!bg && yOrig < 590) despill(d, i); // after the background test, or the backdrop would lose its blue
+      if (bg) { const n = 0.8 + 0.4 * Math.random(); d[i] = hair[0] * n; d[i + 1] = hair[1] * n; d[i + 2] = hair[2] * n; }
     }
     ctx.putImageData(id, 0, 0);
     photos.suitFace = c;
@@ -188,11 +205,33 @@ export async function loadPhotos() {
   // Suit-man full cutout (no background), for posters and the title screen.
   {
     const W = 352, H = 354, c = mk(W, H), ctx = c.getContext('2d');
-    ctx.drawImage(suitImg, 0, 0, W, H);
+    const srcW = suitImg.width - 6; // the original has a 5 px white strip down the right edge
+    ctx.drawImage(suitImg, 0, 0, srcW, suitImg.height, 0, 0, W, H);
     const id = ctx.getImageData(0, 0, W, H), d = id.data;
-    for (let i = 0; i < d.length; i += 4) if (isBlueBg(d[i], d[i + 1], d[i + 2])) d[i + 3] = 0;
-    // the dark TV bezel along the top edge
-    for (let y = 0; y < 22; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; if (d[i] + d[i + 1] + d[i + 2] < 160) d[i + 3] = 0; }
+    const yScale = suitImg.height / H;
+    const keyed = new Uint8Array(W * H);
+    const xScale = srcW / W;
+    for (let p = 0; p < W * H; p++) {
+      const i = p * 4, yOrig = Math.floor(p / W) * yScale, xOrig = (p % W) * xScale;
+      if (isBlueBg(d[i], d[i + 1], d[i + 2]) || isBezel(d[i], d[i + 1], d[i + 2], yOrig, xOrig)) { d[i + 3] = 0; keyed[p] = 1; }
+      else if (yOrig < 590) despill(d, i);
+    }
+    // de-fringe a 2-pixel ring around the removed background: strip the blue spill (ring 1 also softened)
+    const ring = new Uint8Array(W * H);
+    for (let pass = 1; pass <= 2; pass++) {
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const p = y * W + x;
+        if (keyed[p] || ring[p]) continue;
+        const near = (q) => keyed[q] || (pass === 2 && ring[q] === 1);
+        if (near(p - 1) || near(p + 1) || near(p - W) || near(p + W)) ring[p] = pass === 1 ? 1 : 2;
+      }
+    }
+    for (let p = 0; p < W * H; p++) {
+      if (!ring[p] || Math.floor(p / W) * yScale > 590) continue; // leave the blue suit alone
+      const i = p * 4, m = Math.max(d[i], d[i + 1]);
+      if (d[i + 2] > m + 12) d[i + 2] = m + 12;
+      if (ring[p] === 1) d[i + 3] = 175;
+    }
     ctx.putImageData(id, 0, 0);
     photos.suitCutout = c;
   }

@@ -14,6 +14,20 @@ export function buildStructures(world) {
   const clearAbove = (x, z, h = 3) => { for (let y = S; y < S + h; y++) put(x, y, z, AIR); };
   const meta = { signs: [], posters: [], paintings: [], houses: [], seats: [], lamps: [] };
   const rng = mulberry32(4242);
+  // Facing = the direction the readable side looks toward.
+  const FACING = { S: [0, 1, 0], E: [1, 0, Math.PI / 2], N: [0, -1, Math.PI], W: [-1, 0, -Math.PI / 2] };
+  // A sign sitting on top of a 1-block log post (the post never pokes through the sign).
+  const signOnPost = (px, pz, facing, w, h, lines) => {
+    fill(px, S, pz, px, S, pz, B.LOG);
+    meta.signs.push({ x: px + 0.5, y: S + 1 + h / 2 + 0.03, z: pz + 0.5, rotY: FACING[facing][2], w, h, lines });
+  };
+  // A picture mounted on the front face of one or two log posts (posts stay behind it).
+  const posterOnPosts = (posts, postH, facing, o) => {
+    for (const [px, pz] of posts) fill(px, S, pz, px, S + postH - 1, pz, B.LOG);
+    const [nx, nz, rotY] = FACING[facing];
+    const cx = posts.reduce((a, p) => a + p[0] + 0.5, 0) / posts.length, cz = posts.reduce((a, p) => a + p[1] + 0.5, 0) / posts.length;
+    meta.posters.push({ ...o, x: cx + nx * 0.57, z: cz + nz * 0.57, rotY });
+  };
 
   // ---------------- pickleball court ----------------
   for (let z = -10; z <= 9; z++) for (let x = -6; x <= 5; x++) {
@@ -37,22 +51,18 @@ export function buildStructures(world) {
   // scoreboard posts behind the north baseline
   fill(-4, S, -13, -4, S + 4, -13, B.LOG);
   fill(3, S, -13, 3, S + 4, -13, B.LOG);
-  meta.scoreboard = { x: 0, y: S + 3.6, z: -12.45 };
+  meta.scoreboard = { x: 0, y: S + 3.6, z: -11.93 }; // in front of the posts (which end at z = -12)
   // court lamps
   for (const [x, z] of [[-8, -12], [7, -12], [-8, 11], [7, 11]]) { fill(x, S, z, x, S + 2, z, B.LOG); put(x, S + 3, z, B.PICKLE_LAMP); }
 
   // signs and Roy everywhere
   meta.spawn = { x: 0.5, y: S, z: 15.5, yaw: 0 };
-  fill(3, S, 13, 3, S, 13, B.LOG);
-  meta.signs.push({ x: 3.5, y: S + 1.45, z: 13.5, rotY: 0, w: 2.4, h: 1.2, lines: ['PICKLECRAFT COURT', 'Talk to Dinkleton', 'to play a match!', 'Losers explode. -Roy'] });
-  meta.posters.push({ kind: 'roy', x: -14, y: S + 5.5, z: 14, rotY: Math.PI * 0.82, w: 6, h: 7.5, caption: 'ROY SAYS: DINK RESPONSIBLY', posts: true });
-  fill(-17, S, 12, -17, S + 3, 12, B.LOG); fill(-11, S, 16, -11, S + 3, 16, B.LOG);
+  signOnPost(3, 13, 'S', 2.4, 1.2, ['PICKLECRAFT COURT', 'Talk to Dinkleton', 'to play a match!', 'Losers explode. -Roy']);
+  posterOnPosts([[-14, 12], [-14, 16]], 5, 'E', { kind: 'roy', y: S + 4.3, w: 5.4, h: 6.2, caption: 'ROY SAYS: DINK RESPONSIBLY' });
 
   // ---------------- forest edge ----------------
-  meta.posters.push({ kind: 'suit', x: -24.5, y: S + 1.8, z: 6.5, rotY: Math.PI / 2, w: 1.8, h: 2.4, caption: 'HAVE YOU SEEN THIS MAN?', sub: 'Lives in forest. Hates losers.' });
-  fill(-25, S, 6, -25, S + 1, 6, B.LOG);
-  meta.signs.push({ x: -24.4, y: S + 1.3, z: -4.5, rotY: Math.PI / 2, w: 2.2, h: 1.1, lines: ['THE FOREST', 'Keep out.', 'Especially if you', 'lost at pickleball.'] });
-  fill(-25, S, -5, -25, S, -5, B.LOG);
+  posterOnPosts([[-25, 6]], 3, 'E', { kind: 'suit', y: S + 1.6, w: 1.8, h: 2.3, caption: 'HAVE YOU SEEN THIS MAN?', sub: 'Lives in forest. Hates losers.' });
+  signOnPost(-25, -5, 'E', 2.2, 1.1, ['THE FOREST', 'Keep out.', 'Especially if you', 'lost at pickleball.']);
   meta.bigSuitStart = { x: -38, z: 0.5 };
 
   // ---------------- village (east) ----------------
@@ -124,8 +134,7 @@ export function buildStructures(world) {
   }
   fill(56, S, 14, 57, S, 15, B.HAY); put(56, S + 1, 14, B.HAY);
   meta.farm = { x0: 42, x1: 58, z0: 10, z1: 24 };
-  meta.signs.push({ x: 49.5, y: S + 1.3, z: 11.4, rotY: Math.PI, w: 2, h: 1, lines: ['PICKLE FARM', 'Do not pet the chickens.', 'They have faces.'] });
-  fill(49, S, 11, 49, S, 11, B.LOG);
+  signOnPost(49, 11, 'N', 2, 1, ['PICKLE FARM', 'Do not pet the chickens.', 'They have faces.']);
 
   return meta;
 }

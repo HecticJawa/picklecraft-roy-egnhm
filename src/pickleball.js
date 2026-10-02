@@ -99,11 +99,11 @@ export class Match {
     this.sbTex = canvasTexture(c, false);
     const m = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 3.3), new THREE.MeshBasicMaterial({ map: this.sbTex }));
     const s = this.meta.scoreboard;
-    m.position.set(s.x - 0.5, s.y, s.z);
+    m.position.set(s.x, s.y, s.z + 0.01);
     this.sbMat = m.material;
     this.game.scene.add(m);
-    const back = new THREE.Mesh(new THREE.BoxGeometry(6.9, 3.6, 0.15), new THREE.MeshLambertMaterial({ color: 0x2a1e10 }));
-    back.position.set(s.x - 0.5, s.y, s.z - 0.1);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(6.9, 3.6, 0.1), new THREE.MeshLambertMaterial({ color: 0x2a1e10 }));
+    back.position.set(s.x, s.y, s.z - 0.05);
     this.game.scene.add(back);
     this.drawScoreboard();
   }

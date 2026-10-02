@@ -268,8 +268,9 @@ export function makePicture(canvas, w, h, { frame = 0x6b4f2a, border = 0.08 } = 
   const g = new THREE.Group();
   const back = new THREE.Mesh(new THREE.BoxGeometry(w + border * 2, h + border * 2, 0.06), colMat(frame));
   back.position.z = -0.035;
-  const pic = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: canvasTexture(canvas, false) }));
-  pic.position.z = 0.0;
+  // alphaTest lets cut-out photos (transparent around the head) show the frame behind them
+  const pic = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshLambertMaterial({ map: canvasTexture(canvas, false), alphaTest: 0.5 }));
+  pic.position.z = 0.004;
   g.add(back, pic);
   return g;
 }

@@ -141,7 +141,17 @@ export class Villager extends Entity {
     this.paddle.rotation.x = Math.PI / 2;
     this.parts.armR.add(this.paddle);
   }
-  giveSign(mesh) { mesh.position.set(0, 0.55, 0.25); this.parts.head.add(mesh); this.signMesh = mesh; }
+  // A fan's Roy sign: held up on a stick beside and above the head, so it never covers the face.
+  giveSign(mesh) {
+    const holder = new THREE.Group();
+    const stick = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.95, 0.04), new THREE.MeshLambertMaterial({ color: 0x6b4f2a }));
+    stick.position.set(0, 0.47, 0);
+    mesh.position.set(0, 0.95 + 0.36, 0);
+    holder.add(stick, mesh);
+    holder.position.set(0.3, 0.95, 0.2); // right of the body, rising from the hands
+    this.parts.model.add(holder);
+    this.signMesh = holder;
+  }
   say(text, opts = {}) {
     this.game.audio.say(this.voice, text, { pos: this.pos, ...opts });
     this.game.ui.bubble(this, text);
